@@ -1,0 +1,26 @@
+# save_predicted_data.py
+import sqlite3
+
+DB_PATH = "/home/raspberrypi/iot_data.db"
+
+def save_predicted_data(sensor_type, value):
+    print(">>> save_predicted_data() CALLED")
+    print(">>> SENSOR:", sensor_type, "VALUE:", value)
+    print(">>> DB PATH:", DB_PATH)
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO predicted_data (sensor_type, predicted_value)
+            VALUES (?, ?)
+        """, (sensor_type, value))
+
+        conn.commit()
+        conn.close()
+
+        print(">>> PREDICTED DATA INSERTED")
+
+    except Exception as e:
+        print(">>> SQLITE ERROR (prediction):", e)

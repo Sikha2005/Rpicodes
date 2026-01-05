@@ -1,0 +1,112 @@
+#iot_gateway
+from flask import Flask, request
+import sqlite3
+import threading
+import time
+import requests
+
+DB_PATH = "/home/raspberrypi/iot_data.db"
+SERVER_URL = "http://192.168.137.22:6000/cloud"
+CHECK_INTERVAL = 300  # 5 minutes
+
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS live_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            temperature REAL,
+            humidity REAL,
+            gas REAL,
+            sent INTEGER DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+app = Flask(__name__)
+
+@app.route("/data", methods=["GET"])
+def receive_data():
+    temp = request.args.get("temp")
+    hum = request.args.get("hum")
+    gas = request.args.get("gas")
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO live_data (temperature, humidity, gas, sent) VALUES (?, ?, ?, 0)",
+        (temp, hum, gas)
+    )
+    conn.commit()
+    conn.close()
+
+    print("Received:", temp, hum, gas)
+    return "OK", 200
+
+
+def server_available():
+    try:
+        requests.get(SERVER_URL.replace("/cloud", ""), timeout=3)
+        return True
+    except:
+ return False
+
+
+def send_old_data():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id, temperature, humidity, gas
+        FROM live_data
+        WHERE sent = 0
+        ORDER BY id ASC
+        LIMIT 10
+    """)
+    rows = cursor.fetchall()
+
+    for row in rows:
+        row_id, temp, hum, gas = row
+        payload = {
+            "temperature": temp,
+            "humidity": hum,
+            "gas": gas
+        }
+ try:
+            response = requests.post(SERVER_URL, json=payload, timeout=5)
+            if response.status_code == 200:
+                cursor.execute(
+                    "UPDATE live_data SET sent = 1 WHERE id = ?",
+                    (row_id,)
+                )
+                conn.commit()
+                print("Sent data ID:", row_id)
+            else:
+                break
+        except:
+            break
+
+    conn.close()
+
+
+def forwarder_loop():
+    while True:
+        if server_available():
+            send_old_data()
+        time.sleep(CHECK_INTERVAL)
+def forwarder_loop():
+    while True:
+        if server_available():
+            send_old_data()
+        time.sleep(CHECK_INTERVAL)
+
+
+if __name__ == "__main__":
+    init_db()
+
+    thread = threading.Thread(target=forwarder_loop, daemon=True)
+    thread.start()
+
+    app.run(host="0.0.0.0", port=5000)

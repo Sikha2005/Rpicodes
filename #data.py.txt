@@ -1,0 +1,21 @@
+#data.py
+import csv
+import os
+from datetime import datetime
+
+CSV_FILE = "predicted_data.csv"
+
+def save_prediction(pred_value):
+    file_exists = os.path.isfile(CSV_FILE)
+
+    with open(CSV_FILE, mode="a", newline="") as f:
+        writer = csv.writer(f)
+
+        # Write header only once
+        if not file_exists:
+            writer.writerow(["timestamp", "predicted_value"])
+
+        writer.writerow([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            pred_value
+        ])

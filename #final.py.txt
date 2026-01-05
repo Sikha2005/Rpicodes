@@ -1,0 +1,214 @@
+#final.py
+from awscrt import mqtt
+from awsiot import mqtt_connection_builder
+import csv
+import json
+import time
+import sqlite3
+import socket
+
+# ================= CONFIG =================
+ENDPOINT = "a32fnjlonjp1am-ats.iot.us-east-1.amazonaws.com"
+TOPIC = "sensor/data"
+
+CERT = "/home/raspberrypi/rpi_iot.cert.pem"
+KEY  = "/home/raspberrypi/rpi_iot.private.key"
+CA   = "/home/raspberrypi/AmazonRootCA1.pem"
+
+CSV_FILE = "/home/raspberrypi/sensor_data.csv"
+DB_PATH  = "/home/raspberrypi/iot_data.db"
+
+PUBLISH_INTERVAL = 2
+RETRY_INTERVAL   = 5
+# =========================================
+
+
+# ---------- INTERNET CHECK ----------
+def internet_available():
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=3)
+        return True
+    except:
+        return False
+
+
+# ---------- DATABASE ----------
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER,
+            temperature REAL,
+            humidity REAL,
+            gas REAL,
+            status TEXT,
+            sent INTEGER DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def store_local(ts, temp, hum, gas):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO data (timestamp, temperature, humidity, gas, status, sent)
+        VALUES (?, ?, ?, ?, 'offline', 0)
+    """, (ts, temp, hum, gas))
+    conn.commit()
+    conn.close()
+    print(" Stored OFFLINE data")
+
+
+def resend_old_data(mqtt_connection):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, timestamp, temperature, humidity, gas
+        FROM data
+        WHERE sent = 0
+        ORDER BY id ASC
+    """)
+    rows = cur.fetchall()
+
+    for row in rows:
+        row_id, ts, temp, hum, gas = row
+
+        payload = {
+            "timestamp": ts,
+            "temperature": temp,
+            "humidity": hum,
+            "gas": gas,
+            "status": "offline",
+          
+        }
+
+        try:
+            mqtt_connection.publish(
+                topic=TOPIC,
+                payload=json.dumps(payload),
+                qos=mqtt.QoS.AT_LEAST_ONCE
+            )
+            cur.execute("UPDATE data SET sent = 1 WHERE id = ?", (row_id,))
+            conn.commit()
+            print(" Resent OFFLINE data:", payload)
+            time.sleep(1)
+
+        except Exception as e:
+            print("Resend failed:", e)
+            break
+
+    conn.close()
+
+
+# ---------- MQTT ----------
+def connect_mqtt():
+    print("Connecting to AWS IoT...")
+    mqtt_connection = mqtt_connection_builder.mtls_from_path(
+        endpoint=ENDPOINT,
+        cert_filepath=CERT,
+        pri_key_filepath=KEY,
+        ca_filepath=CA,
+        client_id=f"rpi_{int(time.time())}",
+        clean_session=False,
+        keep_alive_secs=30
+    )
+    mqtt_connection.connect().result()
+    print(" MQTT Connected")
+    return mqtt_connection
+
+
+def safe_disconnect(mqtt_connection):
+    try:
+        mqtt_connection.disconnect().result()
+    except:
+        pass
+
+
+# ---------- MAIN LOOP ----------
+def main():
+    init_db()
+    mqtt_connection = None
+
+    while True:
+
+        # ---------- OFFLINE ----------
+        if not internet_available():
+            print(" WiFi OFF → Saving OFFLINE data")
+
+            try:
+                with open(CSV_FILE, newline="") as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    for row in reader:
+                        ts   = int(time.time())
+                        temp = float(row["temperature"])
+                        hum  = float(row["humidity"])
+                        gas  = float(row["gas"])
+
+                        store_local(ts, temp, hum, gas)
+                        time.sleep(PUBLISH_INTERVAL)
+
+            except Exception as e:
+                print("CSV read error:", e)
+
+            time.sleep(RETRY_INTERVAL)
+            continue
+
+
+        # ---------- ONLINE ----------
+        if mqtt_connection is None:
+            try:
+                mqtt_connection = connect_mqtt()
+                resend_old_data(mqtt_connection)
+            except Exception as e:
+                print("MQTT connect failed:", e)
+                mqtt_connection = None
+                time.sleep(RETRY_INTERVAL)
+                continue
+
+        try:
+            with open(CSV_FILE, newline="") as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    ts   = int(time.time())
+                    temp = float(row["temperature"])
+                    hum  = float(row["humidity"])
+                    gas  = float(row["gas"])
+
+                    payload = {
+                        "timestamp": ts,
+                        "temperature": temp,
+                        "humidity": hum,
+                        "gas": gas,
+                        "status": "online"
+                        
+                    }
+
+                    try:
+                        mqtt_connection.publish(
+                            topic=TOPIC,
+                            payload=json.dumps(payload),
+                            qos=mqtt.QoS.AT_LEAST_ONCE
+                        )
+                        print("Published ONLINE:", payload)
+                        time.sleep(PUBLISH_INTERVAL)
+
+                    except Exception as e:
+                        print("Publish failed → OFFLINE:", e)
+                        store_local(ts, temp, hum, gas)
+                        safe_disconnect(mqtt_connection)
+                        mqtt_connection = None
+                        break
+
+        except Exception as e:
+            print("CSV read error:", e)
+
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    main()
+

@@ -1,0 +1,61 @@
+#predict_next_5_gas_rpi.py
+
+import numpy as np
+import pandas as pd
+import tflite_runtime.interpreter as tflite
+from sklearn.preprocessing import MinMaxScaler
+import time
+
+TIME_STEPS = 20
+FUTURE_STEPS = 5   # 🔥 NEXT  5 VALUES
+
+# Load model
+interpreter = tflite.Interpreter(model_path="rnn_gas_model.tflite")
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# Load scaler
+scaler = MinMaxScaler()
+scaler.min_ = np.load("gas_scaler_min.npy")
+scaler.scale_ = np.load("gas_scaler_scale.npy")
+
+print("🔮 Predicting NEXT 5 Gas Values")
+
+while True:
+    df = pd.read_csv("sensor_data.csv")
+
+    df["gas"] = pd.to_numeric(df["gas"], errors="coerce")
+    df = df.dropna()
+
+    if len(df) < TIME_STEPS:
+        print("Waiting for data...")
+        time.sleep(5)
+        continue
+
+    # Last window
+    gas = df["gas"].values[-TIME_STEPS:].reshape(-1, 1)
+    gas_scaled = scaler.transform(gas)
+
+    window = gas_scaled.copy()
+    predictions = []
+
+    for step in range(FUTURE_STEPS):
+        X = window.reshape(1, TIME_STEPS, 1).astype(np.float32)
+
+        interpreter.set_tensor(input_details[0]['index'], X)
+        interpreter.invoke()
+
+        pred_scaled = interpreter.get_tensor(output_details[0]['index'])[0][0]
+        pred = scaler.inverse_transform([[pred_scaled]])[0][0]
+
+        predictions.append(round(pred, 2))
+
+        # slide window
+        window = np.vstack([window[1:], [[pred_scaled]]])
+
+    print("Next 5 Gas Predictions:", predictions)
+    print("------------------------------------")
+
+    time.sleep(5)

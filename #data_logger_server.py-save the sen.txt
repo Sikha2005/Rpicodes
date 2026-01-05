@@ -1,0 +1,27 @@
+#data_logger_server.py-save the sensor data in csv
+
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse, parse_qs
+import csv
+import time
+import os
+
+FILE_NAME = "sensor_data.csv"
+
+# Create CSV file if it doesn't exist
+if not os.path.exists(FILE_NAME):
+    with open(FILE_NAME, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp", "temperature", "humidity", "gas"])
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed = urlparse(self.path)
+
+        if parsed.path == "/data":
+            params = parse_qs(parsed.query)
+
+            temp = params.get("temp", [""])[0]
+            hum  = params.get("hum", [""])[0]
+            gas  = params.get("gas", [""])[0]
+            ts   = time.strftime("%Y-%m-%d %H:%M:%S")

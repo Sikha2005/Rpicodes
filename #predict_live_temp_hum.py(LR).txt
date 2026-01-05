@@ -1,0 +1,39 @@
+#predict_live_temp_hum.py
+
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+import time
+
+WINDOW = 30
+
+print(" Live Temperature & Humidity Prediction Started")
+
+while True:
+    df = pd.read_csv("sensor_data.csv")
+
+    if len(df) < WINDOW:
+        print("Waiting for more data...")
+        time.sleep(5)
+        continue
+
+    # Temperature prediction
+    temp = df["temperature"].astype(float).values[-WINDOW:]
+    X = np.arange(len(temp)).reshape(-1, 1)
+
+    temp_model = LinearRegression()
+    temp_model.fit(X, temp)
+    next_temp = temp_model.predict([[len(temp)]])
+
+    # Humidity prediction
+    hum = df["humidity"].astype(float).values[-WINDOW:]
+
+    hum_model = LinearRegression()
+    hum_model.fit(X, hum)
+    next_hum = hum_model.predict([[len(hum)]])
+
+    print("Predicted NEXT Temperature:", round(next_temp[0], 2), "°C")
+    print("Predicted NEXT Humidity   :", round(next_hum[0], 2), "%")
+    print("----------------------------------------")
+
+    time.sleep(5)

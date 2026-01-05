@@ -1,0 +1,25 @@
+#MODIFYING SERVER.PY
+from flask import Flask, request
+from save_live_data import save_live_data
+
+app = Flask(__name__)
+
+@app.route("/data")
+def receive_data():
+    temp = float(request.args.get("temp"))
+    hum  = float(request.args.get("hum"))
+    gas  = float(request.args.get("gas"))
+
+    print("---- DATA RECEIVED ----")
+    print("Temperature:", temp)
+    print("Humidity:", hum)
+    print("Gas:", gas)
+    print("-----------------------")
+
+    # 🔴 THIS LINE MUST EXECUTE
+    save_live_data(temp, hum, gas)
+
+    return "OK"
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)

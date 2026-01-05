@@ -1,0 +1,68 @@
+#predict_temp_hum_rpi.py
+import numpy as np
+import pandas as pd
+import tflite_runtime.interpreter as tflite
+from sklearn.preprocessing import MinMaxScaler
+import time
+
+TIME_STEPS = 20
+
+# ---------- Load Temperature Model ----------
+temp_interpreter = tflite.Interpreter("rnn_temperature_model.tflite")
+temp_interpreter.allocate_tensors()
+temp_in = temp_interpreter.get_input_details()
+temp_out = temp_interpreter.get_output_details()
+
+temp_scaler = MinMaxScaler()
+temp_scaler.min_ = np.load("temp_scaler_min.npy")
+temp_scaler.scale_ = np.load("temp_scaler_scale.npy")
+
+# ---------- Load Humidity Model ----------
+hum_interpreter = tflite.Interpreter("rnn_humidity_model.tflite")
+hum_interpreter.allocate_tensors()
+hum_in = hum_interpreter.get_input_details()
+hum_out = hum_interpreter.get_output_details()
+
+hum_scaler = MinMaxScaler()
+hum_scaler.min_ = np.load("hum_scaler_min.npy")
+hum_scaler.scale_ = np.load("hum_scaler_scale.npy")
+
+print("🔮 Temperature & Humidity Prediction Running")
+
+while True:
+    df = pd.read_csv("sensor_data.csv")
+
+    df["temperature"] = pd.to_numeric(df["temperature"], errors="coerce")
+    df["humidity"] = pd.to_numeric(df["humidity"], errors="coerce")
+    df = df.dropna()
+
+    if len(df) < TIME_STEPS:
+        print("Waiting for data...")
+        time.sleep(5)
+        continue
+
+    # -------- Temperature --------
+    temp = df["temperature"].values[-TIME_STEPS:].reshape(-1, 1)
+    temp_scaled = temp_scaler.transform(temp)
+    X_temp = temp_scaled.reshape(1, TIME_STEPS, 1).astype(np.float32)
+
+    temp_interpreter.set_tensor(temp_in[0]['index'], X_temp)
+    temp_interpreter.invoke()
+    temp_pred_scaled = temp_interpreter.get_tensor(temp_out[0]['index'])
+    temp_pred = temp_scaler.inverse_transform(temp_pred_scaled)
+
+    # -------- Humidity --------
+    hum = df["humidity"].values[-TIME_STEPS:].reshape(-1, 1)
+    hum_scaled = hum_scaler.transform(hum)
+    X_hum = hum_scaled.reshape(1, TIME_STEPS, 1).astype(np.float32)
+
+    hum_interpreter.set_tensor(hum_in[0]['index'], X_hum)
+    hum_interpreter.invoke()
+    hum_pred_scaled = hum_interpreter.get_tensor(hum_out[0]['index'])
+    hum_pred = hum_scaler.inverse_transform(hum_pred_scaled)
+
+    print(f"Predicted NEXT Temperature: {temp_pred[0][0]:.2f} °C")
+    print(f"Predicted NEXT Humidity   : {hum_pred[0][0]:.2f} %")
+    print("----------------------------------")
+
+    time.sleep(5)

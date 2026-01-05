@@ -1,0 +1,51 @@
+#LSTM FOR HUMIDITY ON PC TRAIN MoDEL
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import SimpleRNN, Dense
+from tensorflow.keras.optimizers import Adam
+import tensorflow as tf
+
+# Load & clean data
+df = pd.read_csv(r"C:\Users\srust\sensor_data.csv")
+df["humidity"] = pd.to_numeric(df["humidity"], errors="coerce")
+df = df.dropna()
+
+data = df["humidity"].values.reshape(-1, 1)
+
+# Safe scaling
+scaler = MinMaxScaler(feature_range=(0.001, 0.999))
+data_scaled = scaler.fit_transform(data)
+
+TIME_STEPS = 20
+X, y = [], []
+for i in range(len(data_scaled) - TIME_STEPS):
+    X.append(data_scaled[i:i + TIME_STEPS])
+    y.append(data_scaled[i + TIME_STEPS])
+
+X, y = np.array(X), np.array(y)
+
+# RNN model
+model = Sequential([
+    SimpleRNN(16, activation="tanh", input_shape=(TIME_STEPS, 1), unroll=True),
+    Dense(1)
+])
+
+model.compile(
+    optimizer=Adam(learning_rate=0.001, clipnorm=1.0),
+    loss="mse"
+)
+model.fit(X, y, epochs=10, batch_size=8, verbose=1)
+
+# Convert to TFLite
+converter = tf.lite.TFLiteConverter.from_keras_model(model)
+tflite_model = converter.convert()
+
+with open("rnn_humidity_model.tflite", "wb") as f:
+    f.write(tflite_model)
+
+np.save("hum_scaler_min.npy", scaler.min_)
+np.save("hum_scaler_scale.npy", scaler.scale_)
+
+print("✅ Humidity RNN model created")

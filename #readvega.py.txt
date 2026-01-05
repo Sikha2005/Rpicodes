@@ -1,0 +1,12 @@
+#readvega.py
+import serial
+import time
+
+ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)
+
+print("Listening to VEGA over USB...")
+
+while True:
+    if ser.in_waiting:
+        print(ser.readline().decode(errors='ignore').strip())
+    time.sleep(0.1)

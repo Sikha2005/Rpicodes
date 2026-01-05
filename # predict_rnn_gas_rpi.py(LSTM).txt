@@ -1,0 +1,60 @@
+# predict_rnn_gas_rpi.py
+import numpy as np
+import pandas as pd
+import tflite_runtime.interpreter as tflite
+from sklearn.preprocessing import MinMaxScaler
+import time
+
+# Load TFLite model
+interpreter = tflite.Interpreter(model_path="rnn_gas_model.tflite")
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# Load scaler
+scaler = MinMaxScaler()
+scaler.min_   = np.load("gas_scaler_min.npy")
+scaler.scale_ = np.load("gas_scaler_scale.npy")
+
+TIME_STEPS = 20
+
+print(" RNN Gas Prediction Running on Raspberry Pi")
+
+while True:
+    try:
+        df = pd.read_csv("sensor_data.csv")
+  # ----------- CLEAN DATA -----------
+        df["gas"] = pd.to_numeric(df["gas"], errors="coerce")
+        df = df.dropna()
+
+        if len(df) < TIME_STEPS:
+            print("Waiting for clean data...")
+            time.sleep(5)
+            continue
+
+        gas = df["gas"].values[-TIME_STEPS:].reshape(-1, 1)
+
+        # ----------- SCALE SAFELY ----------
+        gas_scaled = scaler.transform(gas)
+
+        if np.isnan(gas_scaled).any():
+            print(" NaN after scaling, skipping...")
+            time.sleep(5)
+            continue
+
+        X = gas_scaled.reshape(1, TIME_STEPS, 1).astype(np.float32)
+
+        interpreter.set_tensor(input_details[0]['index'], X)
+        interpreter.invoke()
+
+        pred_scaled = interpreter.get_tensor(output_details[0]['index'])
+        pred = scaler.inverse_transform(pred_scaled)
+
+        print("Predicted NEXT Gas Value (RNN):", round(float(pred[0][0]), 2))
+
+        time.sleep(5)
+
+    except Exception as e:
+        print("Error:", e)
+        time.sleep(5)
